@@ -4,7 +4,7 @@ import sqlite3
 import math
 
 
-class Service:
+class DatabaseHelper:
     # init the service with the path to the database
     def __init__(self, dbPath):
         # check if db exists
@@ -17,10 +17,9 @@ class Service:
         # connection ok, create tables if needs
         if (first_time):
             # create the table
-            query = '''CREATE TABLE activities (
+            query = '''CREATE TABLE records (
 				id INTEGER PRIMARY KEY,
-				activity STRING NOT NULL,
-				EmployeeID STRING,
+				employeeName STRING NOT NULL,
 				start_time LONG NOT NULL,
 				end_time LONG
 				)'''
@@ -34,13 +33,13 @@ class Service:
 
         if (first_time == False):
             # is not the first time, an activity could exist
-            self._updatecache()
+            self.CacheMemory()
 
     # update cache values from db
-    def _updatecache(self):
+    def CacheMemory(self):
         result = self._cursor.execute(
-            '''SELECT id, activity, start_time, end_time 
-            FROM activities 
+            '''SELECT id, employeeName, start_time, end_time 
+            FROM records 
             ORDER BY start_time DESC 
             LIMIT 1''')
         row = result.fetchone()
@@ -53,7 +52,7 @@ class Service:
                 # the activity is "running"
                 self.current_activity = self.last_activity
 
-    def start(self, activity=None):
+    def start_record(self, activity=None):
         result_string = ''
         # check if activity is given
         if activity == None or len(activity) == 0:
@@ -80,16 +79,16 @@ class Service:
         # save the activity in the db
         date = datetime.utcnow()
         timestamp = int(date.timestamp())
-        self._cursor.execute('INSERT INTO activities (activity, start_time) VALUES (?, ?)', (activity, timestamp))
+        self._cursor.execute('INSERT INTO records (employeeName, start_time) VALUES (?, ?)', (activity, timestamp))
         # commit changes
         self._connection.commit()
 
-        self._updatecache()
+        self.CacheMemory()
 
         result_string += "INFO: " + activity + " started at " + date.isoformat()
         return result_string
 
-    def stop(self):
+    def stop_record(self):
         if self.current_activity is None:
             return "ERROR: no activity to stop"
 
@@ -102,41 +101,40 @@ class Service:
         date = datetime.utcnow()
         timestamp = int(date.timestamp())
         # execute db query
-        self._cursor.execute('UPDATE activities SET end_time=? WHERE id=?', (timestamp, self._record_id))
+        self._cursor.execute('UPDATE records SET end_time=? WHERE id=?', (timestamp, self._record_id))
         self._connection.commit()
         # and in cache
         self._record_id = None
 
         # calculate the activity time
         seconds = timestamp - int(self.last_start_time)
-        return "INFO: " + ended_activity + " takes " + Service._durationstring(seconds) + " seconds"
+        return "INFO: " + ended_activity + " takes " + DatabaseHelper.convertDuration(seconds) + " seconds"
 
-    def deleteAct(self, ID):
-        self._cursor.execute("""DELETE FROM activities WHERE activity = ?""", ID)
+    def delete_employee(self, ID):
+        self._cursor.execute("""DELETE FROM records WHERE employeeName = ?""", ID)
         self._connection.commit()
 
-    def editID(self, ID, newID):
+    def update_employee(self, ID, newID):
         #print(ID, newID)
-        self._cursor.execute("""UPDATE activities SET activity = ? WHERE activity = ?""", (newID, ID))
+        self._cursor.execute("""UPDATE records SET employeeName = ? WHERE employeeName = ?""", (newID, ID))
         self._connection.commit()
 
 
 
-    def activities(self, limit=100):
+    def show_list(self, limit=100):
         interval = 60 * 60 * 24
 
         # exe query
         result = self._cursor.execute(
-            """SELECT id, activity, SUM(end_time - start_time) as duration, start_time/? as s_time,
+            """SELECT id, employeeName, SUM(end_time - start_time) as duration, start_time/? as s_time,
             start_time, end_time
-            FROM activities 
+            FROM records 
             WHERE end_time IS NOT NULL
-            GROUP BY activity, s_time
+            GROUP BY employeeName, s_time
             ORDER BY start_time DESC 
             LIMIT ?""", (interval, limit))
         result_string = []
-        result_string.append(""
-                             "**************Employees' Working Hours**************")
+        result_string.append("Employee's Working Hours List")
         s_time = None
         # if exist, print the current_activity
         if self.current_activity is not None:
@@ -149,18 +147,18 @@ class Service:
             if s_time != row[3] and row[3] is not None:
                 s_time = row[3]
                 date = datetime.fromtimestamp(s_time * interval)
-                result_string.append("\t --- from: {date} ---".format(date=date.isoformat()))
+                result_string.append("\t Date: {date}".format(date=date.isoformat()))
             starting_time = datetime.fromtimestamp(float(row[4])).isoformat()
             ending_time = datetime.fromtimestamp(float(row[5])).isoformat()
-            result_string.append("\t{id}\t{activity_name}\t\t\t{duration}\t{starting_time}\t{ending_time}".format(id=str(row[0]),
-                                                                                                                  activity_name=str(row[1]),
-                                                                                                                  duration=Service._durationstring(row[2]),
+            result_string.append("\t{id}\t{employee_name}\t\t\t{duration}\t{starting_time}\t{ending_time}".format(id=str(row[0]),
+                                                                                                                  employee_name=str(row[1]),
+                                                                                                                  duration=DatabaseHelper.convertDuration(row[2]),
                                                                                                                   starting_time=starting_time,
                                                                                                                   ending_time=ending_time))
 
         return "\n".join(result_string)
 
-    def _durationstring(duration):
+    def convertDuration(duration):
         tmp = (60 * 60)
         hours = math.floor(duration / tmp)
         minutes = math.floor((duration / 60) - (hours * 60))
